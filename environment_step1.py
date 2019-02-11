@@ -11,9 +11,9 @@ from pygame.transform import smoothscale
 
 import logging
 
-from agents import *
+from agents_step1 import *
 from items import *
-from settings import s, e
+from settings_training import s, e
 
 
 class BombeRLeWorld(object):
@@ -94,10 +94,10 @@ class BombeRLeWorld(object):
         self.active_agents = []
         self.bombs = []
         self.explosions = []
-        self.round_id = f'Replay {datetime.now().strftime("%Y-%m-%d %H%M%S")}'#edit Lukas %H:%M:%S
+        self.round_id = f'Replay {datetime.now().strftime("%Y-%m-%d %H%M%S")}'#edit Lukas: %H:%M:%S
 
         # Arena with wall and crate layout
-        self.arena = (np.random.rand(s.cols, s.rows) > 0.25).astype(int)
+        self.arena = (np.random.rand(s.cols, s.rows) > 1).astype(int) #empty world
         self.arena[:1, :] = -1
         self.arena[-1:,:] = -1
         self.arena[:, :1] = -1
@@ -106,6 +106,7 @@ class BombeRLeWorld(object):
             for y in range(s.rows):
                 if (x+1)*(y+1) % 2 == 1:
                     self.arena[x,y] = -1
+
 
         # Starting positions
         self.start_positions = [(1,1), (1,s.rows-2), (s.cols-2,1), (s.cols-2,s.rows-2)]
@@ -121,9 +122,9 @@ class BombeRLeWorld(object):
             for j in range(3):
                 while True:
                     x, y = np.random.randint(1+5*i,6+5*i), np.random.randint(1+5*j,6+5*j)
-                    if self.arena[x,y] == 1:
+                    if self.arena[x,y] != -1: #edit for empty world
                         self.coins.append(Coin((x,y)))
-                        # self.coins[-1].collectable=True
+                        self.coins[-1].collectable=True
                         # self.arena[x,y] = 0
                         break
 

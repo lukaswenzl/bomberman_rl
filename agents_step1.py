@@ -10,7 +10,7 @@ from pygame.locals import *
 from pygame.transform import smoothscale
 
 from items import *
-from settings import s, e
+from settings_training import s, e
 
 
 class IgnoreKeyboardInterrupt(object):
@@ -79,7 +79,9 @@ class AgentProcess(mp.Process):
                 # Receive new game state and check for exit message
                 self.wlogger.debug('Receive game state')
                 self.fake_self.game_state = self.pipe_to_world.recv()
-                if (self.fake_self.game_state == None or self.fake_self.game_state['exit']): #edit Lukas
+                #print(self.fake_self.game_state)
+                ##sometimes self.fake_self.game_state can become a number if update_interval to long?! then the program breaks
+                if (self.fake_self.game_state != None and self.fake_self.game_state['exit']): #edit Lukas
                     self.ready_flag.set()
                     self.wlogger.info('Received exit message for round')
                     break
