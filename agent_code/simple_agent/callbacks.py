@@ -92,10 +92,10 @@ def act(self):
 
     # Gather information about the game state
     arena = self.game_state['arena']
-    x, y, _, bombs_left = self.game_state['self']
+    x, y, _, bombs_left, score = self.game_state['self']
     bombs = self.game_state['bombs']
     bomb_xys = [(x,y) for (x,y,t) in bombs]
-    others = [(x,y) for (x,y,n,b) in self.game_state['others']]
+    others = [(x,y) for (x,y,n,b,s) in self.game_state['others']]
     coins = self.game_state['coins']
     bomb_map = np.ones(arena.shape) * 5
     for xb,yb,t in bombs:
@@ -115,7 +115,7 @@ def act(self):
     valid_tiles, valid_actions = [], []
     for d in directions:
         if ((arena[d] == 0) and
-            (self.game_state['explosions'][d] < 1) and
+            (self.game_state['explosions'][d] <= 1) and
             (bomb_map[d] > 0) and
             (not d in others) and
             (not d in bomb_xys)):
