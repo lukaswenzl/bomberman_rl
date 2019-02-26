@@ -10,8 +10,8 @@ import numpy as np
 import multiprocessing as mp
 import threading
 
-from environment import BombeRLeWorld, ReplayWorld
-from settings import s
+from environment_step1 import BombeRLeWorld, ReplayWorld
+from settings_training import s
 
 
 # Function to run the game logic in a separate thread
@@ -41,10 +41,10 @@ def main():
 
     # Initialize environment and agents
     world = BombeRLeWorld([
-            ('agent_step1_v2', True),
-            # ('simple_agent', False),
-            # ('simple_agent', False),
-            # ('simple_agent', False)
+            ('agent_step1', True), #default False
+            #('simple_agent', False),
+            #('simple_agent', False),
+            #('simple_agent', False)
         ])
     # world = ReplayWorld('Replay 2019-01-30 16:57:42')
     user_inputs = []
@@ -57,8 +57,8 @@ def main():
     # Run one or more games
     for i in range(s.n_rounds):
         if not world.running:
-            world.ready_for_restart_flag.wait()
-            world.ready_for_restart_flag.clear()
+            #world.ready_for_restart_flag.wait()
+            #world.ready_for_restart_flag.clear()
             world.new_round()
 
         # First render
