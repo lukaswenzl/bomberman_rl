@@ -7,6 +7,9 @@ from collections import deque
 from settings import s
 from settings import e
 
+from keras.models import Sequential
+from keras.layers import Dense, Activation, InputLayer
+
 
 def look_for_targets(free_space, start, targets, logger=None):
     """Find direction of closest target that can be reached via free tiles.
@@ -80,6 +83,14 @@ def setup(self):
     #self.q_matrix = np.diag([1,1,1,1])
     #self.q_matrix = np.zeros((4,4))#
     self.q_matrix = np.random.rand(4,4) #random Initializing
+
+    #neural network with Keras
+    self.model = Sequential()
+    self.model.add(InputLayer(batch_input_shape=(1, 4))) ##############
+    self.model.add(Dense(10, activation='sigmoid'))
+    self.model.add(Dense(4, activation='linear'))
+    self.model.compile(loss='mse', optimizer='adam', metrics=['mae'])
+
     self.hyperpar = {"y":0.4, "eps": 0.5, "lr":0.2, "training_decay":0.99, "mini_batch_size":100}    #y, eps, learning rate, decay factor alpha
     #not yet sure where the decay factor goes
 
@@ -229,13 +240,13 @@ def act(self):
     a = -1
     # select the action with highest cummulative reward
     self.hyperpar["eps"] =self.hyperpar["eps"]*self.hyperpar["training_decay"]
-    if np.random.random() < self.hyperpar["eps"] or np.sum(self.q_matrix[state, :]) == 0:
+    if np.random.random() < self.hyperpar["eps"]:
         self.next_action = np.random.choice(['RIGHT', 'LEFT', 'UP', 'DOWN', 'BOMB'], p=[.25, .25, .25, .25, .0])
     else:
-        a = np.argmax(self.q_matrix[state, :])
+        a = np.argmax(self.model.predict(np.identity(4)[state:state + 1]))
         self.next_action = number_to_actions[a]
 
-    while (self.next_action not in valid_actions):
+    while (self.next_action not in valid_actions): #not future proof
         self.next_action = np.random.choice(['RIGHT', 'LEFT', 'UP', 'DOWN', 'BOMB'], p=[.25, .25, .25, .25, .0])
 
 
@@ -246,6 +257,7 @@ def act(self):
     if(state != actions_to_number[self.next_action]):
         reward = -0.01
     self.experience.append([state, actions_to_number[self.next_action], reward])
+
     #store state
 
 def reward_update(self):
@@ -283,17 +295,25 @@ def end_of_episode(self):
     for i in np.random.randint(len(self.experience)-1, size=self.hyperpar["mini_batch_size"]):
         s, a, r = self.experience[i]
         new_s, new_a, new_r = self.experience[i+1]
-        self.q_matrix[s, a] += r + self.hyperpar["lr"] * (self.hyperpar["y"] * np.max(self.q_matrix[new_s, :]) - self.q_matrix[s, a])
+        #self.q_matrix[s, a] += r + self.hyperpar["lr"] * (self.hyperpar["y"] * np.max(self.q_matrix[new_s, :]) - self.q_matrix[s, a])
+
+        target = r + self.hyperpar["y"] * np.max(self.model.predict(np.identity(4)[new_s:new_s + 1]))
+        target_vec = self.model.predict(np.identity(4)[s:s + 1])[0]
+        target_vec[a] = target
+        self.model.fit(np.identity(4)[s:s + 1], target_vec.reshape(-1, 4), epochs=1, verbose=0)
+
     #print(self.q_matrix)
-    print(len(self.visualize_convergence))
+    #print(len(self.visualize_convergence))
 
-    #measure for convergence
-    trace = np.trace(self.q_matrix)
-    su = np.sum(self.q_matrix)
-    off_diag = su -trace
-    difference = trace - off_diag
-    self.visualize_convergence.append(difference)
-
+    #measure for convergence; now i have to reconstruct the q_matrix, not usefull
+    # trace = 0
+    # off_diag = 0
+    # for i in range(4):
+    #     row_of_q = self.model.predict(np.identity(4)[i:i + 1]).reshape(-1)
+    #     trace += row_of_q[i]
+    #     off = [j for j in range(4) if j!=i]
+    #     for j in off:
+    #         off_diag += row_of_q[j]
 
     self.episodes.append(len(self.experience))
 
@@ -305,6 +325,15 @@ def end_of_episode(self):
         reward += self.experience[i][2]
     print(reward)
 
-    #if(len(self.visualize_convergence)==51):
-        #print(np.array(self.visualize_convergence))
-        #np.savetxt("data_for_visualisations/step1_qmatrix.out", np.array(self.visualize_convergence))
+
+
+    # trace = np.trace(self.q_matrix)
+    # su = np.sum(self.q_matrix)
+    # off_diag = su -trace
+    difference = trace - off_diag
+    self.visualize_convergence.append(difference)
+    print(difference)
+
+    # if(len(self.visualize_convergence)==51):
+    #     print(np.array(self.visualize_convergence))
+    #     np.savetxt("data_for_visualisations/step1sdfdggtdbr_qmatrix.out", np.array(self.visualize_convergence))
