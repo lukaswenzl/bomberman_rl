@@ -9,8 +9,10 @@ from settings import e
 
 from keras.models import Sequential
 from keras.layers import Dense, Activation, InputLayer
+from keras.utils import plot_model
+from keras.models import load_model
 
-AGENT_NAME = "agent_step1_v2"
+AGENT_NAME = "agent_step1_v4"
 
 
 def look_for_targets(free_space, start, targets, logger=None):
@@ -87,15 +89,17 @@ def setup(self):
     self.q_matrix = np.random.rand(4,4) #random Initializing
 
     #neural network with Keras
+    self.logger.debug(self)
     self.model = Sequential()
     self.model.add(InputLayer(batch_input_shape=(1, 4))) ##############
-    self.model.add(Dense(10, activation='sigmoid'))
+    self.model.add(Dense(10, input_shape=(1,4), activation='sigmoid'))
     self.model.add(Dense(4, activation='linear'))
     self.model.compile(loss='mse', optimizer='adam', metrics=['mae'])
 
-    self.hyperpar = {"y":0.4, "eps": 0.5, "lr":0.2, "training_decay":0.99, "mini_batch_size":100}    #y, eps, learning rate, decay factor alpha
+    self.hyperpar = {"y":0.4, "eps": 0.9    , "lr":0.2, "training_decay":0.99, "mini_batch_size":1000}    #y, eps, learning rate, decay factor alpha
     #not yet sure where the decay factor goes
 
+    self.train = True #####################needs to be changed
 
     self.visualize_convergence = []
 
@@ -114,6 +118,17 @@ def act(self):
     of self.next_action will be used. The default value is 'WAIT'.
     """
     self.logger.info('Picking action according to rule set')
+
+    #print(self.game_state["train"])
+    if( (not self.game_state["train"]) and  (self.train) ): ############################needs to be changed
+        # print(reached)
+        # print(self.game_state["train"])
+        # print(self.train)
+
+        #self.model = load_model(AGENT_NAME+'.h5')
+        self.model.load_weights("agent_code/"+AGENT_NAME+"/"+AGENT_NAME+'.h5')
+        self.train=False
+        print("weights loaded")
 
 
     # Gather information about the game state
@@ -164,7 +179,7 @@ def act(self):
     # dead_ends = [(x,y) for x in range(1,16) for y in range(1,16) if (arena[x,y] == 0)
     #                 and ([arena[x+1,y], arena[x-1,y], arena[x,y+1], arena[x,y-1]].count(0) == 1)]
     # crates = [(x,y) for x in range(1,16) for y in range(1,16) if (arena[x,y] == 1)]
-    targets = coins #+ dead_ends + crates
+    targets = [coins[0]] #+ dead_ends + crates
     # Add other agents as targets if in hunting mode or no crates/coins left
     # if self.ignore_others_timer <= 0 or (len(crates) + len(coins) == 0):
     #     targets.extend(others)
@@ -232,17 +247,32 @@ def act(self):
     # if self.next_action == 'BOMB':
     #     self.bomb_history.append((x,y))
 
+    if(coins == []):
+        next_goal = [0,0]
+    else:
+        next_goal = coins[0]
+    #input = np.array([[x,y, next_goal[0], next_goal[1]]]) #state s
+    input = np.array([[0,0, next_goal[0]-x, next_goal[1]-y]]) #state s, version 4
+
+    #print(input.shape)
+
+
+
     self.next_action = np.random.choice(['RIGHT', 'LEFT', 'UP', 'DOWN', 'BOMB'], p=[.25, .25, .25, .25, .0])
 
     number_to_actions = {0:"UP", 1:"RIGHT", 2:"DOWN", 3:"LEFT"}
 
     a = -1
     # select the action with highest cummulative reward
-    self.hyperpar["eps"] =self.hyperpar["eps"]*self.hyperpar["training_decay"]
-    if np.random.random() < self.hyperpar["eps"]:
-        self.next_action = np.random.choice(['RIGHT', 'LEFT', 'UP', 'DOWN', 'BOMB'], p=[.25, .25, .25, .25, .0])
+    if(self.game_state["train"]):
+            self.hyperpar["eps"] =self.hyperpar["eps"]*self.hyperpar["training_decay"]
+            if np.random.random() < self.hyperpar["eps"]:
+                self.next_action = np.random.choice(['RIGHT', 'LEFT', 'UP', 'DOWN', 'BOMB'], p=[.25, .25, .25, .25, .0])
+            else:
+                a = np.argmax(self.model.predict(input))
+                self.next_action = number_to_actions[a]
     else:
-        a = np.argmax(self.model.predict(np.identity(4)[state:state + 1]))
+        a = np.argmax(self.model.predict(input))
         self.next_action = number_to_actions[a]
 
     while (self.next_action not in valid_actions): #not future proof
@@ -254,8 +284,8 @@ def act(self):
     actions_to_number = {"UP":0, "RIGHT":1, "DOWN":2, "LEFT":3}
     reward = 0
     if(state != actions_to_number[self.next_action]):
-        reward = -0.01
-    self.experience.append([state, actions_to_number[self.next_action], reward])
+        reward = -0.1 #increased
+    self.experience.append([input, actions_to_number[self.next_action], reward])
 
     #store state
 
@@ -289,49 +319,74 @@ def end_of_episode(self):
     """
     self.logger.debug(f'Encountered {len(self.events)} game event(s) in final step')
 
-    #imrpove Q matrix
-    #might break if training size is to small at the beginning
-    for i in np.random.randint(len(self.experience)-1, size=self.hyperpar["mini_batch_size"]):
-        s, a, r = self.experience[i]
-        new_s, new_a, new_r = self.experience[i+1]
-        #self.q_matrix[s, a] += r + self.hyperpar["lr"] * (self.hyperpar["y"] * np.max(self.q_matrix[new_s, :]) - self.q_matrix[s, a])
+    if(self.game_state["train"]):
+        #might break if training size is to small at the beginning
+        mini_batch = self.hyperpar["mini_batch_size"]
+        if(mini_batch >= len(self.experience)):
+            mini_batch = len(self.experience)-1
+        for i in np.random.randint(len(self.experience)-1, size=mini_batch):
+            s, a, r = self.experience[i]
+            new_s, new_a, new_r = self.experience[i+1]
+            #self.q_matrix[s, a] += r + self.hyperpar["lr"] * (self.hyperpar["y"] * np.max(self.q_matrix[new_s, :]) - self.q_matrix[s, a])
 
-        target = r + self.hyperpar["y"] * np.max(self.model.predict(np.identity(4)[new_s:new_s + 1]))
-        target_vec = self.model.predict(np.identity(4)[s:s + 1])[0]
-        target_vec[a] = target
-        self.model.fit(np.identity(4)[s:s + 1], target_vec.reshape(-1, 4), epochs=1, verbose=0)
+            target = r + self.hyperpar["y"] * np.max(self.model.predict(new_s))
+            target_vec = self.model.predict(s)[0]
+            target_vec[a] = target
+            self.model.fit(s, target_vec.reshape(-1, 4), epochs=1, verbose=0)
 
-    #print(self.q_matrix)
-    #print(len(self.visualize_convergence))
+        #print(self.q_matrix)
+        #print(len(self.visualize_convergence))
 
-    #measure for convergence; now i have to reconstruct the q_matrix, not usefull
-    # trace = 0
-    # off_diag = 0
-    # for i in range(4):
-    #     row_of_q = self.model.predict(np.identity(4)[i:i + 1]).reshape(-1)
-    #     trace += row_of_q[i]
-    #     off = [j for j in range(4) if j!=i]
-    #     for j in off:
-    #         off_diag += row_of_q[j]
+        #measure for convergence; now i have to reconstruct the q_matrix, not usefull
+        # trace = 0
+        # off_diag = 0
+        # for i in range(4):
+        #     row_of_q = self.model.predict(np.identity(4)[i:i + 1]).reshape(-1)
+        #     trace += row_of_q[i]
+        #     off = [j for j in range(4) if j!=i]
+        #     for j in off:
+        #         off_diag += row_of_q[j]
 
-    self.episodes.append(len(self.experience))
+        #save the point where the experience for this game ends
+        self.episodes.append(len(self.experience))
 
-    #total reward this game
-    start = self.episodes[-2]
-    end = self.episodes[-1]
-    reward = 0
-    for i in range(start, end):
-        reward += self.experience[i][2]
-    print(reward)
+        #total reward this game
+        start = self.episodes[-2]
+        end = self.episodes[-1]
+        reward = 0
+        for i in range(start, end):
+            reward += self.experience[i][2]
+        _, _, _,_,game_reward = self.game_state['self']
+        print(str(reward)+" and game rewards: "+str(game_reward))
 
 
+        # if(len(self.episodes) == 10):
+        #     plot_model(self.model, to_file='model_step10.png', show_shapes=True, expand_nested=True)
+        #
+        # if(len(self.episodes) == 100):
+        #     plot_model(self.model, to_file='model_step100.png', show_shapes=True, expand_nested=True)
+        #
+        # if(len(self.episodes) == 1000):
+        #     plot_model(self.model, to_file='model_step1000.png', show_shapes=True, expand_nested=True)
 
-    _, _, _,_,game_reward = self.game_state['self']
-    self.visualize_convergence.append(game_reward)
+        if(game_reward == 9):
+            #plot_model(self.model, to_file='model_reward9.png', show_shapes=True, expand_nested=True)
+            #self.model.save(AGENT_NAME+'.h5')
+            self.model.save_weights("agent_code/"+AGENT_NAME+"/"+AGENT_NAME+'.h5')
 
-    a = np.asarray(self.visualize_convergence)
-    np.savetxt("agent_code/"+AGENT_NAME+"/"+AGENT_NAME+"_rewards.csv", a, delimiter=",")
+        _, _, _,_,game_reward = self.game_state['self']
+        self.visualize_convergence.append(game_reward)
 
-    # if(len(self.visualize_convergence)==51):
-    #     print(np.array(self.visualize_convergence))
-    #     np.savetxt("data_for_visualisations/step1sdfdggtdbr_qmatrix.out", np.array(self.visualize_convergence))
+        a = np.asarray(self.visualize_convergence)
+        np.savetxt("agent_code/"+AGENT_NAME+"/"+AGENT_NAME+"_rewards.csv", a, delimiter=",")
+
+        # trace = np.trace(self.q_matrix)
+        # su = np.sum(self.q_matrix)
+        # off_diag = su -trace
+        # difference = trace - off_diag
+        # self.visualize_convergence.append(difference)
+        # print(difference)
+
+        # if(len(self.visualize_convergence)==51):
+        #     print(np.array(self.visualize_convergence))
+        #     np.savetxt("data_for_visualisations/step1sdfdggtdbr_qmatrix.out", np.array(self.visualize_convergence))
