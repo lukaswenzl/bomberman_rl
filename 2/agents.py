@@ -84,7 +84,7 @@ class AgentProcess(mp.Process):
                 self.fake_self.game_state = self.pipe_to_world.recv()
                 if self.fake_self.game_state['exit']:
                     self.ready_flag.set()
-                    self.wlogger.info('Received exit message for round')
+                    self.wlogger.info(f'Received exit message for round after step {self.fake_self.game_state["step"]}')
                     break
                 self.wlogger.info(f'STARTING STEP {self.fake_self.game_state["step"]}')
 

@@ -276,7 +276,7 @@ def act(self):
         self.next_action = number_to_actions[a]
 
     while (self.next_action not in valid_actions): #not future proof
-        self.next_action = np.random.choice(['RIGHT', 'LEFT', 'UP', 'DOWN', 'BOMB'], p=[.25, .25, .25, .25, .0])
+        self.next_action = np.random.choice(['RIGHT', 'LEFT', 'UP', 'DOWN', 'BOMB','WAIT'], p=[.2, .2, .2, .2, .0, .2])
 
 
     #if self.train_flag.is_set(): would have to chain trianing flag into this but then I would have to change
