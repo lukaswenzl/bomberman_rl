@@ -31,6 +31,7 @@ def setup(self):
     # Fixed length FIFO queues to avoid repeating the same actions
     self.bomb_history = deque([], 5)
     self.coordinate_history = deque([], 20)
+    self.action_history = deque([], 20)
     # While this timer is positive, agent will not hunt/attack opponents
     self.ignore_others_timer = 0
 
@@ -49,7 +50,7 @@ def setup(self):
     self.model.add(Dense(6, activation='linear'))
     self.model.compile(loss='mse', optimizer='adam', metrics=['mae'])
 
-    self.hyperpar = {"y":0.4, "eps": 0.8, "lr":0.2, "training_decay":0.99, "mini_batch_size":1000}    #y, eps, learning rate, decay factor alpha
+    self.hyperpar = {"y":0.4, "eps": 0.9999, "lr":0.2, "training_decay":0.9999, "mini_batch_size":1000}    #y, eps, learning rate, decay factor alpha
     #not yet sure where the decay factor goes
 
     self.train = True #####################needs to be changed
@@ -88,7 +89,7 @@ def check_actions(self):
         self.ignore_others_timer = 5
     else:
         self.ignore_others_timer -= 1
-    self.coordinate_history.append((x,y))
+    #self.coordinate_history.append((x,y))
 
     # Check which moves make sense at all
     directions = [(x,y), (x+1,y), (x-1,y), (x,y+1), (x,y-1)]
@@ -270,6 +271,11 @@ def act(self):
                 a = np.argmax(self.model.predict(input.reshape(1, self.training_input)))
                 #print(a)
                 self.next_action = number_to_actions[a]
+            if self.coordinate_history.count((x,y)) > 4:
+                if ((valid_actions != []) and (valid_actions == self.action_history[-2])):
+                    while ((self.next_action == self.action_history[-2]) or (self.next_action not in valid_actions)):
+                        self.next_action = np.random.choice(['RIGHT', 'LEFT', 'UP', 'DOWN', ], p=[.25, .25, .25, .25])
+
     else:
         a = np.argmax(self.model.predict(input.reshape(1, self.training_input)))
         self.next_action = number_to_actions[a]
@@ -280,13 +286,14 @@ def act(self):
         else:
             self.next_action = np.random.choice(['RIGHT', 'LEFT', 'UP', 'DOWN', 'BOMB', 'WAIT'], p=[.23, .23, .23, .23, .08, 0.0])
 
-    # Keep track of chosen action for cycle detection
+        # Keep track of chosen action for cycle detection
     if self.next_action == 'BOMB':
         self.bomb_history.append((x,y))
 
     actions_to_number = {"UP":0, "RIGHT":1, "DOWN":2, "LEFT":3, "BOMB": 4, "WAIT": 5}
     reward = 0
     self.experience.append([input, actions_to_number[self.next_action], reward])
+    self.action_history.append(self.next_action)
 
 def reward_update(self):
     """Called once per step to allow intermediate rewards based on game events.
@@ -385,6 +392,9 @@ def end_of_episode(self):
     if(game_reward == 9):
         self.model.save_weights("agent_code/"+AGENT_NAME+"/"+AGENT_NAME+'.h5')
     '''
+
+    #self.model.save_weights("agent_code/"+AGENT_NAME+"/"+AGENT_NAME+'.h5')
+    self.model.save_weights(AGENT_NAME+'.h5')
 
     _, _, _,_,game_reward = self.game_state['self']
     self.visualize_convergence.append(game_reward)

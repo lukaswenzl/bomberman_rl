@@ -41,7 +41,7 @@ def main():
 
     # Initialize environment and agents
     world = BombeRLeWorld([
-            ('deepQ_agent', True),
+            ('deepQ_agent', True), #_withPCA
             # ('simple_agent', False),
             # ('simple_agent', False),
             # ('simple_agent', False)

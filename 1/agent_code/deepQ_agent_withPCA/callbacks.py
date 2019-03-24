@@ -6,12 +6,16 @@ from collections import deque
 
 from settings import s, e
 
+import pickle
+
 from keras.models import Sequential
 from keras.layers import Dense, Activation, InputLayer, Flatten
 from keras.utils import plot_model, to_categorical
 from keras.models import load_model
 
-AGENT_NAME = "deepQ_agent"
+from sklearn.decomposition import PCA
+
+AGENT_NAME = "deepQ_agent_withPCA"
 
 def setup(self):
     """Called once before a set of games to initialize data structures etc.
@@ -34,13 +38,14 @@ def setup(self):
     self.experience  = []# Lukas: will contain arrays with [[s,a,r],[s,a,r],...]
     self.episodes = [0] #ranges for the different games
 
-    self.inputarena = 9
+
+    self.training_input = 60
 
     #neural network with Keras
     self.logger.debug(self)
     self.model = Sequential()
-    self.model.add(Dense(10,input_shape=(self.inputarena,self.inputarena))) ##############
-    self.model.add(Flatten())
+    self.model.add(Dense(10,input_shape=(self.training_input,))) ##############
+    #self.model.add(Flatten())##############!
     self.model.add(Dense(10, activation='sigmoid')) #, input_shape=(31,31)
     self.model.add(Dense(6, activation='linear'))
     self.model.compile(loss='mse', optimizer='adam', metrics=['mae'])
@@ -50,9 +55,18 @@ def setup(self):
 
     self.train = True #####################needs to be changed
 
-    self.model.load_weights("agent_code/"+AGENT_NAME+"/"+AGENT_NAME+'_actual.h5')
-
     self.visualize_convergence = []
+
+    filename = 'PCA.save'
+    # load the model from disk
+    self.pca = pickle.load(open(filename, 'rb'))
+    filename = 'PCA_full_field.save'
+    self.pca_full_field = pickle.load(open(filename, 'rb'))
+
+
+
+
+
 
 def check_actions(self):
     self.logger.info('Picking action according to rule set')
@@ -75,7 +89,7 @@ def check_actions(self):
         self.ignore_others_timer = 5
     else:
         self.ignore_others_timer -= 1
-    self.coordinate_history.append((x,y))
+    #self.coordinate_history.append((x,y))
 
     # Check which moves make sense at all
     directions = [(x,y), (x+1,y), (x-1,y), (x,y+1), (x,y-1)]
@@ -97,7 +111,7 @@ def check_actions(self):
     self.logger.debug(f'Valid actions: {valid_actions}')
     return valid_actions
 
-def create_input_arena(self):
+def create_input_arena(self, in_size=9):
     arena = self.game_state['arena']
     x, y, _, bombs_left, score = self.game_state['self']
     bombs = self.game_state['bombs']
@@ -110,7 +124,7 @@ def create_input_arena(self):
             if (0 < i < bomb_map.shape[0]) and (0 < j < bomb_map.shape[1]):
                 bomb_map[i,j] = min(bomb_map[i,j], t)
 
-    arena_copy = self.game_state['arena'].copy()
+    arena_copy = self.game_state['arena']
     for i in range(len(coins)):
         arena_copy[coins[i]] = 2
     for i in range(len(bomb_xys)):
@@ -120,7 +134,7 @@ def create_input_arena(self):
     arena_copy[x,y] = 5
     #print(arena_copy.T)
 
-    input_size, arena_size = self.inputarena, 17
+    input_size, arena_size = in_size, 17
     center = int((input_size-1)/2)
     center_off = [x-center,y-center]
     grid_off = int((input_size-1)/2)
@@ -130,7 +144,17 @@ def create_input_arena(self):
     proj = [(xi,yi) for xi in arena_x for yi in arena_y if np.any(abs(xi-x)<=grid_off) &  np.any(abs(yi-y)<=grid_off)]
     for (xi,yi) in proj:
         input[xi-center_off[0],yi-center_off[1]] = arena_copy[xi,yi]
-    return input
+
+    input = input+1 #now numbers going from 0 to 6
+    input = input.reshape(-1) #reshape to 1d array
+    input = input.astype(int) #We want integers
+    b = np.zeros((input.size, 7))
+    b[np.arange(input.size), input] = 1
+
+    b = b.reshape(-1)
+
+    return b
+
 
     '''arena_x, arena_y = np.linspace(0,16,17), np.linspace(0,16,17)
     arena_xv, arena_yv = np.meshgrid(arena_x,arena_y)
@@ -194,6 +218,14 @@ def act(self):
     input[new_arena_xv,new_arena_yv] = arena_copy[arena_xv, arena_yv]
     #print('new_arena')
     '''
+    b = create_input_arena(self,  in_size=9)
+
+    #applying PCA
+    input1 = self.pca.transform([b])[0]
+    b = create_input_arena(self,  in_size=33)
+    input2 = self.pca_full_field.transform([b])[0]
+    input = np.concatenate([input1,input2])
+    #print(input.T)
 
     # If agent has been in the same location three times recently, it's a loop
     if self.coordinate_history.count((x,y)) > 2:
@@ -204,9 +236,6 @@ def act(self):
 
     # jan: Determine which actions are valid
     valid_actions = check_actions(self)
-
-    input = create_input_arena(self)
-    #print(input.T)
 
     # Compile a list of 'targets' the agent should head towards
     crates = [(x,y) for x in range(1,16) for y in range(1,16) if (arena[x,y] == 1)]
@@ -237,28 +266,28 @@ def act(self):
     if(self.game_state["train"]):
             self.hyperpar["eps"] =self.hyperpar["eps"]*self.hyperpar["training_decay"]
             if np.random.random() < self.hyperpar["eps"]:
-                self.next_action = np.random.choice(['RIGHT', 'LEFT', 'UP', 'DOWN', 'BOMB', 'WAIT'], p=[.25, .25, .25, .25, 0.0, 0.0])
+                self.next_action = np.random.choice(['RIGHT', 'LEFT', 'UP', 'DOWN', 'BOMB', 'WAIT'], p=[.23, .23, .23, .23, .08, 0.0])
             else:
-                a = np.argmax(self.model.predict(input.reshape(-1,self.inputarena,self.inputarena)))
+                a = np.argmax(self.model.predict(input.reshape(1, self.training_input)))
                 #print(a)
                 self.next_action = number_to_actions[a]
-
-                if self.coordinate_history.count((x,y)) > 4:
-                    if ((valid_actions != []) and (valid_actions == self.action_history[-2])):
-                        while ((self.next_action == self.action_history[-2]) or (self.next_action not in valid_actions)):
-                            self.next_action = np.random.choice(['RIGHT', 'LEFT', 'UP', 'DOWN', ], p=[.25, .25, .25, .25])
-
+            '''
+            if self.coordinate_history.count((x,y)) > 4:
+                if ((valid_actions != []) and (valid_actions == self.action_history[-2])):
+                    while ((self.next_action == self.action_history[-2]) or (self.next_action not in valid_actions)):
+                        self.next_action = np.random.choice(['RIGHT', 'LEFT', 'UP', 'DOWN', ], p=[.25, .25, .25, .25])
+            '''
     else:
-        a = np.argmax(self.model.predict(input.reshape(-1,self.inputarena,self.inputarena)))
+        a = np.argmax(self.model.predict(input.reshape(1, self.training_input)))
         self.next_action = number_to_actions[a]
 
     while ((self.next_action not in valid_actions) and (valid_actions != [])): #not future proof
         if(valid_actions==['WAIT']):
             self.next_action = 'WAIT'
         else:
-            self.next_action = np.random.choice(['RIGHT', 'LEFT', 'UP', 'DOWN', 'BOMB', 'WAIT'], p=[.25, .25, .25, .25, 0.0, 0.0])
+            self.next_action = np.random.choice(['RIGHT', 'LEFT', 'UP', 'DOWN', 'BOMB', 'WAIT'], p=[.23, .23, .23, .23, .08, 0.0])
 
-    # Keep track of chosen action for cycle detection
+        # Keep track of chosen action for cycle detection
     if self.next_action == 'BOMB':
         self.bomb_history.append((x,y))
 
@@ -344,10 +373,10 @@ def end_of_episode(self):
         for i in np.random.randint(len(self.experience)-1, size=mini_batch):
             s, a, r = self.experience[i]
             new_s, new_a, new_r = self.experience[i+1]
-            target = r + self.hyperpar["y"] * np.max(self.model.predict(new_s.reshape(-1,self.inputarena,self.inputarena)))
-            target_vec = self.model.predict(s.reshape(-1,self.inputarena,self.inputarena))[0]
+            target = r + self.hyperpar["y"] * np.max(self.model.predict(new_s.reshape(1, self.training_input)))
+            target_vec = self.model.predict(s.reshape(1, self.training_input))[0]
             target_vec[a] = target
-            self.model.fit(s.reshape(-1,self.inputarena,self.inputarena), target_vec.reshape(-1,6), epochs=1, verbose=0)
+            self.model.fit(s.reshape(1, self.training_input), target_vec.reshape(-1,6), epochs=1, verbose=0)
 
     #save the point where the experience for this game ends
     self.episodes.append(len(self.experience))
@@ -360,9 +389,13 @@ def end_of_episode(self):
         reward += self.experience[i][2]
     _, _, _,_,game_reward = self.game_state['self']
     print(str(reward)+" and game rewards: "+str(game_reward)+" after step "+str(self.game_state["step"]))
-
-    if(game_reward >= 8):
+    '''
+    if(game_reward == 9):
         self.model.save_weights("agent_code/"+AGENT_NAME+"/"+AGENT_NAME+'.h5')
+    '''
+
+    #self.model.save_weights("agent_code/"+AGENT_NAME+"/"+AGENT_NAME+'.h5')
+    self.model.save_weights(AGENT_NAME+'.h5')
 
     _, _, _,_,game_reward = self.game_state['self']
     self.visualize_convergence.append(game_reward)
