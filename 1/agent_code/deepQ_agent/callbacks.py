@@ -41,6 +41,7 @@ def setup(self):
     self.model = Sequential()
     self.model.add(Dense(10,input_shape=(self.inputarena,self.inputarena))) ##############
     self.model.add(Flatten())
+    self.model.add(Dense(self.inputarena**2, activation='sigmoid'))
     self.model.add(Dense(10, activation='sigmoid')) #, input_shape=(31,31)
     self.model.add(Dense(6, activation='linear'))
     self.model.compile(loss='mse', optimizer='adam', metrics=['mae'])
@@ -50,7 +51,7 @@ def setup(self):
 
     self.train = True #####################needs to be changed
 
-    self.model.load_weights("agent_code/"+AGENT_NAME+"/"+AGENT_NAME+'_actual.h5')
+    #self.model.load_weights("agent_code/"+AGENT_NAME+"/"+AGENT_NAME+'_actual.h5')
 
     self.visualize_convergence = []
 
