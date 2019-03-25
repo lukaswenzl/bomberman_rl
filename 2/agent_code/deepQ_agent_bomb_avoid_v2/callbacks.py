@@ -41,16 +41,18 @@ def setup(self):
     self.model.add(Dense(10,input_shape=(self.inputarena+1,self.inputarena))) ##############
     self.model.add(Flatten())
     self.model.add(Dense(10, activation='sigmoid')) #, input_shape=(31,31)
-    self.model.add(Dense(10, activation='sigmoid')) ###############################added layer
+    #self.model.add(Dense(10, activation='sigmoid')) ###############################added layer
     self.model.add(Dense(6, activation='linear'))
     self.model.compile(loss='mse', optimizer='adam', metrics=['mae'])
 
-    self.hyperpar = {"y":0.4, "eps": 0.9999, "lr":0.2, "training_decay":0.9999, "mini_batch_size":1000}    #y, eps, learning rate, decay factor alpha
+    self.hyperpar = {"y":0.4, "eps": 0.9999, "lr":0.6, "training_decay":0.99, "mini_batch_size":1000}    #y, eps, learning rate, decay factor alpha
     #not yet sure where the decay factor goes
 
     self.train = True #####################needs to be changed
 
     self.visualize_convergence = []
+    self.random_count = 0
+    self.train = True
 
 def check_actions(self):
     self.logger.info('Picking action according to rule set')
@@ -203,6 +205,18 @@ def act(self):
     self.logger.info('Picking action according to rule set')
 
     #Load weights at this point?
+    if( (not self.game_state["train"]) and  (self.train) ): ############################needs to be changed
+        # print(reached)
+        # print(self.game_state["train"])
+        # print(self.train)
+
+        #self.model = load_model(AGENT_NAME+'.h5')
+        #self.model.load_weights("agent_code/"+AGENT_NAME+"/"+AGENT_NAME+'.h5')
+        self.model.load_weights(AGENT_NAME+'.h5')
+        print("model loaded")
+
+        self.train=False
+        print("weights loaded")
 
     # Gather information about the game state
     arena = self.game_state['arena']
@@ -315,9 +329,10 @@ def act(self):
     a = -1
     # select the action with highest cummulative reward
     if(self.game_state["train"]):
-            self.hyperpar["eps"] =self.hyperpar["eps"]*self.hyperpar["training_decay"]
+
             if np.random.random() < self.hyperpar["eps"]:
                 self.next_action = np.random.choice(['RIGHT', 'LEFT', 'UP', 'DOWN', 'BOMB', 'WAIT'], p=[.23, .23, .23, .23, .08, 0.0])
+                self.random_count = self.random_count+1
             else:
                 a = np.argmax(self.model.predict(input.reshape(-1,self.inputarena+1,self.inputarena)))
                 #print(a)
@@ -332,15 +347,18 @@ def act(self):
         else:
             self.next_action = np.random.choice(['RIGHT', 'LEFT', 'UP', 'DOWN', 'BOMB', 'WAIT'], p=[.23, .23, .23, .23, .08, 0.0])
 
-    # Keep track of chosen action for cycle detection
-    if self.next_action == 'BOMB':
-        self.bomb_history.append((x,y))
+
 
     #avoid stupid moves
     dead_ends = [(x,y) for x in range(1,16) for y in range(1,16) if (arena[x,y] == 0)
                     and ([arena[x+1,y], arena[x-1,y], arena[x,y+1], arena[x,y-1]].count(0) == 1)]
     backup_actions = [i for i in valid_actions if i != "BOMB"]
-    if (x,y) not in dead_ends and self.next_action == "BOMB":# and backup_actions != []:
+
+    enemy_in_range = False
+    distances = [np.sqrt((xx-x)**2 + (yy-y)**2) for (xx,yy) in others]
+    if( distances != [] and min(distances) <= 2):
+        enemy_in_range = True
+    if (x,y) not in dead_ends and enemy_in_range == False and  self.next_action == "BOMB":# and backup_actions != []:
         self.next_action = np.random.choice(['RIGHT', 'LEFT', 'UP', 'DOWN', 'WAIT'], p=[.23, .23, .23, .23, .08])
 
     run_away_options =  bomb_avoidance(self)
@@ -348,7 +366,9 @@ def act(self):
         #print(run_away_options)
         self.next_action = run_away_options[-1]
 
-
+    # Keep track of chosen action for cycle detection
+    if self.next_action == 'BOMB':
+        self.bomb_history.append((x,y))
 
     reward = 0
     self.experience.append([input, actions_to_number[self.next_action], reward])
@@ -418,11 +438,12 @@ def end_of_episode(self):
         current_step[2] += -5
         self.experience[-1] = current_step #This should never be able to happen
 
-    current_step = self.experience[-1]
-    current_step[2] += -0.05*self.game_state["step"]
-    self.experience[-1] = current_step #This should never be able to happen
+    # current_step = self.experience[-1]
+    # current_step[2] += -0.01*self.game_state["step"]
+    # self.experience[-1] = current_step #This should never be able to happen
 
     if(self.game_state["train"]):
+        self.hyperpar["eps"] =self.hyperpar["eps"]*self.hyperpar["training_decay"]
         #might break if training size is to small at the beginning
         mini_batch = self.hyperpar["mini_batch_size"]
         if(mini_batch >= len(self.experience)):
@@ -445,7 +466,9 @@ def end_of_episode(self):
     for i in range(start, end):
         reward += self.experience[i][2]
     _, _, _,_,game_reward = self.game_state['self']
-    print(str(reward)+" and game rewards: "+str(game_reward)+" after step "+str(self.game_state["step"]))
+    print(str(reward)+" and game rewards: "+str(game_reward)+" after step "+str(self.game_state["step"])+" # random steps: "+str(self.random_count))
+    self.random_count = 0
+
 
     if(game_reward == 9):
         self.model.save_weights("agent_code/"+AGENT_NAME+"/"+AGENT_NAME+'.h5')
@@ -454,6 +477,18 @@ def end_of_episode(self):
     _, _, _,_,game_reward = self.game_state['self']
     self.visualize_convergence.append(game_reward)
 
-    if(self.episodes % 20 == 5): #only every 20th run
+    if(len(self.episodes) % 20 == 5): #only every 20th run
         a = np.asarray(self.visualize_convergence)
         np.savetxt(AGENT_NAME+"_rewards.csv", a, delimiter=",")
+        #self.model.save_weights("test.h5")
+        #self.model.save_weights("agent_code/"+AGENT_NAME+"/"+AGENT_NAME+'.h5')
+        self.model.save_weights(AGENT_NAME+'.h5')
+
+
+    if(len(self.experience) > 10000):
+        old_length = len(self.experience)
+        self.experience[-10000:]
+        new_length = len(self.experience)
+        self.episodes = self.episodes - old_length+new_length
+        print(old_length)
+        print(new_length)
