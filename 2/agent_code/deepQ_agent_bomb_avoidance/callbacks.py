@@ -11,7 +11,7 @@ from keras.layers import Dense, Activation, InputLayer, Flatten
 from keras.utils import plot_model, to_categorical
 from keras.models import load_model
 
-AGENT_NAME = "deepQ_agent"
+AGENT_NAME = "deepQ_agent_bomb_avoidance"
 
 def setup(self):
     """Called once before a set of games to initialize data structures etc.
@@ -44,7 +44,7 @@ def setup(self):
     self.model.add(Dense(6, activation='linear'))
     self.model.compile(loss='mse', optimizer='adam', metrics=['mae'])
 
-    self.hyperpar = {"y":0.4, "eps": 0.8, "lr":0.2, "training_decay":0.99, "mini_batch_size":1000}    #y, eps, learning rate, decay factor alpha
+    self.hyperpar = {"y":0.4, "eps": 0.9999, "lr":0.2, "training_decay":0.9999, "mini_batch_size":1000}    #y, eps, learning rate, decay factor alpha
     #not yet sure where the decay factor goes
 
     self.train = True #####################needs to be changed
@@ -136,6 +136,55 @@ def create_input_arena(self):
     new_arena_xv, new_arena_yv = arena_xv+7+center_off[0], arena_yv+7+center_off[1]
     input[new_arena_xv,new_arena_yv] = arena_copy[arena_xv, arena_yv]'''
 
+def bomb_avoidance(self):
+    # Add proposal to run away from any nearby bomb about to blow
+    run_away_options = []
+    arena = self.game_state['arena']
+    x, y, _, bombs_left, score = self.game_state['self']
+    others = [(x,y) for (x,y,n,b,s) in self.game_state['others']]
+    bombs = self.game_state['bombs']
+    bomb_xys = [(x,y) for (x,y,t) in bombs]
+    bomb_map = np.ones(arena.shape) * 5
+    for xb,yb,t in bombs:
+        for (i,j) in [(xb+h, yb) for h in range(-3,4)] + [(xb, yb+h) for h in range(-3,4)]:
+            if (0 < i < bomb_map.shape[0]) and (0 < j < bomb_map.shape[1]):
+                bomb_map[i,j] = min(bomb_map[i,j], t)
+    for xb,yb,t in bombs:
+        if (xb == x) and (abs(yb-y) < 4):
+            # Run away
+            if (yb > y): run_away_options.append('UP')
+            if (yb < y): run_away_options.append('DOWN')
+            # If possible, turn a corner
+            run_away_options.append('LEFT')
+            run_away_options.append('RIGHT')
+        if (yb == y) and (abs(xb-x) < 4):
+            # Run away
+            if (xb > x): run_away_options.append('LEFT')
+            if (xb < x): run_away_options.append('RIGHT')
+            # If possible, turn a corner
+            run_away_options.append('UP')
+            run_away_options.append('DOWN')
+
+    directions = [(x,y), (x+1,y), (x-1,y), (x,y+1), (x,y-1)]
+    valid_tiles, valid_actions = [], []
+    for d in directions:
+        if ((arena[d] == 0) and
+            (self.game_state['explosions'][d] <= 1) and
+            (bomb_map[d] > 0) and
+            (not d in others) and
+            (not d in bomb_xys)):
+            valid_tiles.append(d)
+    if (x-1,y) in valid_tiles: valid_actions.append('LEFT')
+    if (x+1,y) in valid_tiles: valid_actions.append('RIGHT')
+    if (x,y-1) in valid_tiles: valid_actions.append('UP')
+    if (x,y+1) in valid_tiles: valid_actions.append('DOWN')
+    if (x,y)   in valid_tiles: valid_actions.append('WAIT')
+    # Disallow the BOMB action if agent dropped a bomb in the same spot recently
+    if (bombs_left > 0) and (x,y) not in self.bomb_history: valid_actions.append('BOMB')
+
+    run_away_options = [i for i in run_away_options if i in valid_actions]
+
+    return run_away_options
 
 def act(self):
     """Called each game step to determine the agent's next action.
@@ -252,6 +301,19 @@ def act(self):
     if self.next_action == 'BOMB':
         self.bomb_history.append((x,y))
 
+    #avoid stupid moves
+    dead_ends = [(x,y) for x in range(1,16) for y in range(1,16) if (arena[x,y] == 0)
+                    and ([arena[x+1,y], arena[x-1,y], arena[x,y+1], arena[x,y-1]].count(0) == 1)]
+    backup_actions = [i for i in valid_actions if i != "BOMB"]
+    if (x,y) not in dead_ends and self.next_action == "BOMB":# and backup_actions != []:
+        self.next_action = np.random.choice(['RIGHT', 'LEFT', 'UP', 'DOWN', 'WAIT'], p=[.23, .23, .23, .23, .08])
+
+    run_away_options =  bomb_avoidance(self)
+    if (run_away_options != [] and self.next_action not in run_away_options):
+        #print(run_away_options)
+        self.next_action = run_away_options[-1]
+
+
     actions_to_number = {"UP":0, "RIGHT":1, "DOWN":2, "LEFT":3, "BOMB": 4, "WAIT": 5}
     reward = 0
     self.experience.append([input, actions_to_number[self.next_action], reward])
@@ -278,12 +340,12 @@ def reward_update(self):
 
     if(e.COIN_FOUND in self.events):
         current_step = self.experience[-1]
-        current_step[2] += 5
+        current_step[2] += 15
         self.experience[-1] = current_step #reward 1 for finding a coin
 
     if(e.COIN_COLLECTED in self.events):
         current_step = self.experience[-1]
-        current_step[2] += 10
+        current_step[2] += 40
         self.experience[-1] = current_step #reward 2 for collecting a coin
 
     if(e.INVALID_ACTION in self.events):
@@ -308,7 +370,7 @@ def end_of_episode(self):
 
     if(e.COIN_COLLECTED in self.events):
         current_step = self.experience[-1]
-        current_step[2] += 10
+        current_step[2] += 40
         self.experience[-1] = current_step #reward 2 for collecting a coin
 
     if(e.SURVIVED_ROUND in self.events):
@@ -349,13 +411,14 @@ def end_of_episode(self):
         reward += self.experience[i][2]
     _, _, _,_,game_reward = self.game_state['self']
     print(str(reward)+" and game rewards: "+str(game_reward)+" after step "+str(self.game_state["step"]))
-    '''
+
     if(game_reward == 9):
         self.model.save_weights("agent_code/"+AGENT_NAME+"/"+AGENT_NAME+'.h5')
-    '''
+
 
     _, _, _,_,game_reward = self.game_state['self']
     self.visualize_convergence.append(game_reward)
 
-    a = np.asarray(self.visualize_convergence)
-    np.savetxt(AGENT_NAME+"_rewards.csv", a, delimiter=",")
+    if(self.episodes % 20 == 5): #only every 20th run
+        a = np.asarray(self.visualize_convergence)
+        np.savetxt(AGENT_NAME+"_rewards.csv", a, delimiter=",")
