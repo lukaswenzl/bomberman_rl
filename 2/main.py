@@ -41,13 +41,8 @@ def main():
 
     # Initialize environment and agents
     world = BombeRLeWorld([
-<<<<<<< HEAD
-            ('deepQ_agent_withPCA', True),
-            #('random_agent', True),
-=======
-            ('deepQ_agent_withPCA_bomb_avoidance', True),
+            ('deepQ_agent_bomb_avoid_v2', True),
             #('simple_agent', False),
->>>>>>> dd3fc8a3e9067daf7ada360b495262d88c5c55a8
             #('simple_agent', False),
             #('simple_agent', False)
         ])

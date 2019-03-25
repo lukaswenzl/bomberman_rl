@@ -7,7 +7,7 @@ from collections import deque
 from settings import s, e
 
 from keras.models import Sequential
-from keras.layers import Dense, Activation, InputLayer, Flatten
+from keras.layers import Dense, Activation, InputLayer, Flatten, BatchNormalization
 from keras.utils import plot_model, to_categorical
 from keras.models import load_model
 
@@ -39,11 +39,16 @@ def setup(self):
     #neural network with Keras
     self.logger.debug(self)
     self.model = Sequential()
-    self.model.add(Dense(10,input_shape=(self.inputarena,self.inputarena))) ##############
+    self.model.add(Dense(10,input_shape=(self.inputarena,self.inputarena)))
+    self.model.add(BatchNormalization()) ##############
     self.model.add(Flatten())
-    self.model.add(Dense(self.inputarena**2, activation='sigmoid'))
-    self.model.add(Dense(10, activation='sigmoid')) #, input_shape=(31,31)
-    self.model.add(Dense(6, activation='linear'))
+    #self.model.add(Dense(self.inputarena**2, activation='sigmoid'))
+    self.model.add(Dense(10)) #, input_shape=(31,31) activation='sigmoid'
+    self.model.add(BatchNormalization())
+    self.model.add(Activation("sigmoid"))
+    self.model.add(Dense(6)) #, activation='linear'
+    self.model.add(BatchNormalization())
+    self.model.add(Activation('linear'))
     self.model.compile(loss='mse', optimizer='adam', metrics=['mae'])
 
     self.hyperpar = {"y":0.4, "eps": 0.9999, "lr":0.2, "training_decay":0.9999, "mini_batch_size":1000}    #y, eps, learning rate, decay factor alpha
@@ -52,6 +57,7 @@ def setup(self):
     self.train = True #####################needs to be changed
 
     #self.model.load_weights("agent_code/"+AGENT_NAME+"/"+AGENT_NAME+'_actual.h5')
+    #self.model.load_weights("agent_code/"+AGENT_NAME+"/"+AGENT_NAME+'.h5')
 
     self.visualize_convergence = []
 

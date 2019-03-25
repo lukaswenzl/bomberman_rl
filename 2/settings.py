@@ -9,17 +9,13 @@ settings = {
     # Display
     'width': 1000,
     'height': 600,
-    'gui': True,
+    'gui': False,
     'fps': 15,
 
     # Main loop
     'update_interval': 0.1, # 0.33,
     'turn_based': False,
-<<<<<<< HEAD
-    'n_rounds': 1000,
-=======
     'n_rounds': 10000,
->>>>>>> dd3fc8a3e9067daf7ada360b495262d88c5c55a8
     'save_replay': False,
     'make_video_from_replay': False,
 
