@@ -11,7 +11,7 @@ from keras.layers import Dense, Activation, InputLayer, Flatten, BatchNormalizat
 from keras.utils import plot_model, to_categorical
 from keras.models import load_model
 
-AGENT_NAME = "deepQ_agent"
+AGENT_NAME = "wengrae"
 
 def setup(self):
     """Called once before a set of games to initialize data structures etc.
@@ -31,35 +31,30 @@ def setup(self):
     # While this timer is positive, agent will not hunt/attack opponents
     self.ignore_others_timer = 0
 
-    self.experience  = []# Lukas: will contain arrays with [[s,a,r],[s,a,r],...]
-    self.episodes = [0] #ranges for the different games
+    self.experience  = []
+    self.episodes = [0]
 
     self.inputarena = 9
 
     #neural network with Keras
     self.logger.debug(self)
     self.model = Sequential()
-    self.model.add(Dense(10,input_shape=(self.inputarena,self.inputarena)))
-    self.model.add(BatchNormalization()) ##############
+    self.model.add(Dense(10,input_shape=(self.inputarena+1,self.inputarena)))
     self.model.add(Flatten())
-    #self.model.add(Dense(self.inputarena**2, activation='sigmoid'))
-    self.model.add(Dense(10)) #, input_shape=(31,31) activation='sigmoid'
     self.model.add(BatchNormalization())
-    self.model.add(Activation("sigmoid"))
-    self.model.add(Dense(6)) #, activation='linear'
+    self.model.add(Dense(10))
+    self.model.add(BatchNormalization())
+    self.model.add(Activation('sigmoid'))
+    self.model.add(Dense(6))
     self.model.add(BatchNormalization())
     self.model.add(Activation('linear'))
     self.model.compile(loss='mse', optimizer='adam', metrics=['mae'])
 
-    self.hyperpar = {"y":0.4, "eps": 0.9999, "lr":0.2, "training_decay":0.9999, "mini_batch_size":1000}    #y, eps, learning rate, decay factor alpha
-    #not yet sure where the decay factor goes
-
-    self.train = True #####################needs to be changed
-
-    #self.model.load_weights("agent_code/"+AGENT_NAME+"/"+AGENT_NAME+'_actual.h5')
-    #self.model.load_weights("agent_code/"+AGENT_NAME+"/"+AGENT_NAME+'.h5')
+    self.hyperpar = {"y":0.4, "eps": 0.9999, "lr":0.6, "training_decay":0.99, "mini_batch_size":1000}    #y, eps, learning rate, decay factor alpha
 
     self.visualize_convergence = []
+    self.random_count = 0
+    self.train = True
 
 def check_actions(self):
     self.logger.info('Picking action according to rule set')
@@ -77,13 +72,6 @@ def check_actions(self):
             if (0 < i < bomb_map.shape[0]) and (0 < j < bomb_map.shape[1]):
                 bomb_map[i,j] = min(bomb_map[i,j], t)
 
-    # If agent has been in the same location three times recently, it's a loop
-    if self.coordinate_history.count((x,y)) > 2:
-        self.ignore_others_timer = 5
-    else:
-        self.ignore_others_timer -= 1
-    self.coordinate_history.append((x,y))
-
     # Check which moves make sense at all
     directions = [(x,y), (x+1,y), (x-1,y), (x,y+1), (x,y-1)]
     valid_tiles, valid_actions = [], []
@@ -100,7 +88,7 @@ def check_actions(self):
     if (x,y+1) in valid_tiles: valid_actions.append('DOWN')
     if (x,y)   in valid_tiles: valid_actions.append('WAIT')
     # Disallow the BOMB action if agent dropped a bomb in the same spot recently
-    #if (bombs_left > 0) and (x,y) not in self.bomb_history: valid_actions.append('BOMB')
+    if (bombs_left > 0) and (x,y) not in self.bomb_history: valid_actions.append('BOMB')
     self.logger.debug(f'Valid actions: {valid_actions}')
     return valid_actions
 
@@ -139,13 +127,57 @@ def create_input_arena(self):
         input[xi-center_off[0],yi-center_off[1]] = arena_copy[xi,yi]
     return input
 
-    '''arena_x, arena_y = np.linspace(0,16,17), np.linspace(0,16,17)
-    arena_xv, arena_yv = np.meshgrid(arena_x,arena_y)
-    arena_xv, arena_yv = arena_xv.astype(int), arena_yv.astype(int)
-    input = -1*np.ones((31,31))
-    new_arena_xv, new_arena_yv = arena_xv+7+center_off[0], arena_yv+7+center_off[1]
-    input[new_arena_xv,new_arena_yv] = arena_copy[arena_xv, arena_yv]'''
+def bomb_avoidance(self):
+    # Add proposal to run away from any nearby bomb about to blow
+    run_away_options = []
+    arena = self.game_state['arena']
+    x, y, _, bombs_left, score = self.game_state['self']
+    others = [(x,y) for (x,y,n,b,s) in self.game_state['others']]
+    bombs = self.game_state['bombs']
+    bomb_xys = [(x,y) for (x,y,t) in bombs]
+    bomb_map = np.ones(arena.shape) * 5
+    for xb,yb,t in bombs:
+        for (i,j) in [(xb+h, yb) for h in range(-3,4)] + [(xb, yb+h) for h in range(-3,4)]:
+            if (0 < i < bomb_map.shape[0]) and (0 < j < bomb_map.shape[1]):
+                bomb_map[i,j] = min(bomb_map[i,j], t)
+    for xb,yb,t in bombs:
+        if (xb == x) and (abs(yb-y) < 4):
+            # Run away
+            if (yb > y): run_away_options.append('UP')
+            if (yb < y): run_away_options.append('DOWN')
+            # If possible, turn a corner
+            run_away_options.append('LEFT')
+            run_away_options.append('RIGHT')
+        if (yb == y) and (abs(xb-x) < 4):
+            # Run away
+            if (xb > x): run_away_options.append('LEFT')
+            if (xb < x): run_away_options.append('RIGHT')
+            # If possible, turn a corner
+            run_away_options.append('UP')
+            run_away_options.append('DOWN')
 
+    directions = [(x,y), (x+1,y), (x-1,y), (x,y+1), (x,y-1)]
+    valid_tiles, valid_actions = [], []
+    for d in directions:
+        if ((arena[d] == 0) and
+            (self.game_state['explosions'][d] <= 1) and
+            (bomb_map[d] > 0) and
+            (not d in others) and
+            (not d in bomb_xys)):
+            valid_tiles.append(d)
+    if (x-1,y) in valid_tiles: valid_actions.append('LEFT')
+    if (x+1,y) in valid_tiles: valid_actions.append('RIGHT')
+    if (x,y-1) in valid_tiles: valid_actions.append('UP')
+    if (x,y+1) in valid_tiles: valid_actions.append('DOWN')
+    if (x,y)   in valid_tiles: valid_actions.append('WAIT')
+    # Disallow the BOMB action if agent dropped a bomb in the same spot recently
+    if (bombs_left > 0) and (x,y) not in self.bomb_history: valid_actions.append('BOMB')
+
+    run_away_options = [i for i in run_away_options if i in valid_actions]
+    #print(valid_actions)
+    #print(run_away_options)
+
+    return run_away_options
 
 def act(self):
     """Called each game step to determine the agent's next action.
@@ -163,6 +195,11 @@ def act(self):
     self.logger.info('Picking action according to rule set')
 
     #Load weights at this point?
+    if( (not self.game_state["train"]) and (self.train) ): ############################needs to be changed
+        self.model.load_weights(AGENT_NAME+'.h5')
+        print("model loaded")
+        self.train=False
+        print("weights loaded")
 
     # Gather information about the game state
     arena = self.game_state['arena']
@@ -177,30 +214,8 @@ def act(self):
             if (0 < i < bomb_map.shape[0]) and (0 < j < bomb_map.shape[1]):
                 bomb_map[i,j] = min(bomb_map[i,j], t)
 
-    '''
-    #Build modified arena as input for NN
-    #put all the information into arena shaped array
-    arena_copy = self.game_state['arena']
-    for i in range(len(coins)):
-        arena_copy[coins[i]] = 2
-    for i in range(len(bomb_xys)):
-        arena_copy[bomb_xys[i]] = 3
-    for i in range(len(others)):
-        arena_copy[others[i]] = 4
-    arena_copy[x,y] = 5
-    #print(arena_copy.T)
-
-    center = [8,8]
-    center_off = np.subtract(center,[x,y])
-    grid_off = [7,7]
-    arena_x, arena_y = np.linspace(0,16,17), np.linspace(0,16,17)
-    arena_xv, arena_yv = np.meshgrid(arena_x,arena_y)
-    arena_xv, arena_yv = arena_xv.astype(int), arena_yv.astype(int)
-    input = -1*np.ones((31,31))
-    new_arena_xv, new_arena_yv = arena_xv+7+center_off[0], arena_yv+7+center_off[1]
-    input[new_arena_xv,new_arena_yv] = arena_copy[arena_xv, arena_yv]
-    #print('new_arena')
-    '''
+    input = create_input_arena(self)
+    #print(input.T)
 
     # If agent has been in the same location three times recently, it's a loop
     if self.coordinate_history.count((x,y)) > 2:
@@ -209,11 +224,32 @@ def act(self):
         self.ignore_others_timer -= 1
     self.coordinate_history.append((x,y))
 
-    # jan: Determine which actions are valid
     valid_actions = check_actions(self)
 
-    input = create_input_arena(self)
-    #print(input.T)
+    actions_to_number = {"UP":0, "RIGHT":1, "DOWN":2, "LEFT":3, "BOMB": 4, "WAIT": 5}
+    valid_numbers = [actions_to_number[i] for i in valid_actions]
+    additional_input = np.zeros(self.inputarena)
+    additional_input[valid_numbers] = 1
+
+    dead_ends = [(x,y) for x in range(1,16) for y in range(1,16) if (arena[x,y] == 0)
+                    and ([arena[x+1,y], arena[x-1,y], arena[x,y+1], arena[x,y-1]].count(0) == 1)]
+    targets = coins + dead_ends
+    # Add other agents as targets if in hunting mode or no crates/coins left
+    if self.ignore_others_timer <= 0 or (len(coins) == 0):
+        targets.extend(others)
+    targets = [ (xx - x, yy -y) for (xx,yy) in targets]
+    if (len(targets) == 1):
+        target.expend([(100,100)])
+    if (len(targets) == 0):
+        target.expend([(100,100), (100,100)])
+    distance = np.array([ xx*xx + yy*yy for (xx, yy) in targets])
+    best_target = targets[distance.argsort()[0]]
+    second_best_target = targets[distance.argsort()[0]]
+    additional_input[5] = best_target[0]
+    additional_input[6] = best_target[1]
+    additional_input[7] = second_best_target[0]
+    additional_input[8] = second_best_target[1]
+    input = np.append(input, [additional_input], axis=0)
 
     # Compile a list of 'targets' the agent should head towards
     crates = [(x,y) for x in range(1,16) for y in range(1,16) if (arena[x,y] == 1)]
@@ -221,19 +257,6 @@ def act(self):
     # Add other agents as targets if in hunting mode or no crates/coins left
     if self.ignore_others_timer <= 0 or (len(crates) + len(coins) == 0):
         targets.extend(others)
-    '''
-    # Exclude targets that are currently occupied by a bomb
-    targets = [targets[i] for i in range(len(targets)) if targets[i] not in bomb_xys]
-    '''
-
-    '''
-    if(coins == []):
-        next_goal = [0,0]
-    else:
-        next_goal = coins[0]
-
-    input = np.array([[next_goal[0]-x, next_goal[1]-y]])
-    '''
 
     self.next_action = np.random.choice(['RIGHT', 'LEFT', 'UP', 'DOWN', 'BOMB', 'WAIT'], p=[.23, .23, .23, .23, .08, 0.0])
 
@@ -242,37 +265,47 @@ def act(self):
     a = -1
     # select the action with highest cummulative reward
     if(self.game_state["train"]):
-            self.hyperpar["eps"] =self.hyperpar["eps"]*self.hyperpar["training_decay"]
             if np.random.random() < self.hyperpar["eps"]:
-                self.next_action = np.random.choice(['RIGHT', 'LEFT', 'UP', 'DOWN', 'BOMB', 'WAIT'], p=[.25, .25, .25, .25, 0.0, 0.0])
+                self.next_action = np.random.choice(['RIGHT', 'LEFT', 'UP', 'DOWN', 'BOMB', 'WAIT'], p=[.23, .23, .23, .23, .08, 0.0])
+                self.random_count = self.random_count+1
             else:
-                a = np.argmax(self.model.predict(input.reshape(-1,self.inputarena,self.inputarena)))
+                a = np.argmax(self.model.predict(input.reshape(-1,self.inputarena+1,self.inputarena)))
                 #print(a)
                 self.next_action = number_to_actions[a]
-
-                if self.coordinate_history.count((x,y)) > 4:
-                    if ((valid_actions != []) and (valid_actions == self.action_history[-2])):
-                        while ((self.next_action == self.action_history[-2]) or (self.next_action not in valid_actions)):
-                            self.next_action = np.random.choice(['RIGHT', 'LEFT', 'UP', 'DOWN', ], p=[.25, .25, .25, .25])
-
     else:
-        a = np.argmax(self.model.predict(input.reshape(-1,self.inputarena,self.inputarena)))
+        a = np.argmax(self.model.predict(input.reshape(-1,self.inputarena+1,self.inputarena)))
         self.next_action = number_to_actions[a]
 
     while ((self.next_action not in valid_actions) and (valid_actions != [])): #not future proof
         if(valid_actions==['WAIT']):
             self.next_action = 'WAIT'
         else:
-            self.next_action = np.random.choice(['RIGHT', 'LEFT', 'UP', 'DOWN', 'BOMB', 'WAIT'], p=[.25, .25, .25, .25, 0.0, 0.0])
+            self.next_action = np.random.choice(['RIGHT', 'LEFT', 'UP', 'DOWN', 'BOMB', 'WAIT'], p=[.23, .23, .23, .23, .08, 0.0])
+
+    #avoid stupid moves
+    dead_ends = [(x,y) for x in range(1,16) for y in range(1,16) if (arena[x,y] == 0)
+                    and ([arena[x+1,y], arena[x-1,y], arena[x,y+1], arena[x,y-1]].count(0) == 1)]
+
+    enemy_in_range = False
+    distances = [np.sqrt((xx-x)**2 + (yy-y)**2) for (xx,yy) in others]
+    if( distances != [] and min(distances) <= 2):
+        enemy_in_range = True
+    if (x,y) not in dead_ends and enemy_in_range == False and  self.next_action == "BOMB":
+        deadend_actions = [i for i in ['RIGHT', 'LEFT', 'UP', 'DOWN'] if i in valid_actions]
+        self.next_action = np.random.choice(deadend_actions)
+
+    run_away_options =  bomb_avoidance(self)
+
+    if ((run_away_options != []) and (self.next_action not in run_away_options)):
+        self.next_action = run_away_options[-1]
 
     # Keep track of chosen action for cycle detection
+    self.action_history.append(self.next_action)
     if self.next_action == 'BOMB':
         self.bomb_history.append((x,y))
 
-    actions_to_number = {"UP":0, "RIGHT":1, "DOWN":2, "LEFT":3, "BOMB": 4, "WAIT": 5}
     reward = 0
     self.experience.append([input, actions_to_number[self.next_action], reward])
-    self.action_history.append(self.next_action)
 
 def reward_update(self):
     """Called once per step to allow intermediate rewards based on game events.
@@ -284,28 +317,27 @@ def reward_update(self):
     contrast to act, this method has no time limit.
     """
     self.logger.debug(f'Encountered {len(self.events)} game event(s)')
-    #self.logger.debug((self.events == 9).count())
 
     if(e.CRATE_DESTROYED in self.events):
         ev, count = np.unique(self.events,return_counts=True)
         N_destroyed = count[ev==9][0]
         current_step = self.experience[-1]
         current_step[2] += 1*N_destroyed
-        self.experience[-1] = current_step #reward 0.1 per destroyed crate.
+        self.experience[-1] = current_step #reward 1 per destroyed crate.
         #CAUTION: would also give reward, if other agent destroyed a crate!
 
     if(e.COIN_FOUND in self.events):
         current_step = self.experience[-1]
-        current_step[2] += 5
-        self.experience[-1] = current_step #reward 1 for finding a coin
+        current_step[2] += 15
+        self.experience[-1] = current_step #reward 15 for finding a coin
 
     if(e.COIN_COLLECTED in self.events):
         current_step = self.experience[-1]
-        current_step[2] += 10
-        self.experience[-1] = current_step #reward 2 for collecting a coin
+        current_step[2] += 40
+        self.experience[-1] = current_step #reward 40 for collecting a coin
 
     if(e.INVALID_ACTION in self.events):
-        print('invalid')
+        print('XXXinvalidXXX')
         current_step = self.experience[-1]
         current_step[2] += -10
         self.experience[-1] = current_step #This should never be able to happen
@@ -313,7 +345,7 @@ def reward_update(self):
     if(e.KILLED_SELF in self.events):
         current_step = self.experience[-1]
         current_step[2] += -5
-        self.experience[-1] = current_step #This should never be able to happen
+        self.experience[-1] = current_step
 
 
 def end_of_episode(self):
@@ -327,7 +359,7 @@ def end_of_episode(self):
 
     if(e.COIN_COLLECTED in self.events):
         current_step = self.experience[-1]
-        current_step[2] += 10
+        current_step[2] += 40
         self.experience[-1] = current_step #reward 2 for collecting a coin
 
     if(e.SURVIVED_ROUND in self.events):
@@ -340,11 +372,8 @@ def end_of_episode(self):
         current_step[2] += -5
         self.experience[-1] = current_step #This should never be able to happen
 
-    current_step = self.experience[-1]
-    current_step[2] += -0.05*self.game_state["step"]
-    self.experience[-1] = current_step #This should never be able to happen
-
     if(self.game_state["train"]):
+        self.hyperpar["eps"] =self.hyperpar["eps"]*self.hyperpar["training_decay"]
         #might break if training size is to small at the beginning
         mini_batch = self.hyperpar["mini_batch_size"]
         if(mini_batch >= len(self.experience)):
@@ -352,10 +381,10 @@ def end_of_episode(self):
         for i in np.random.randint(len(self.experience)-1, size=mini_batch):
             s, a, r = self.experience[i]
             new_s, new_a, new_r = self.experience[i+1]
-            target = r + self.hyperpar["y"] * np.max(self.model.predict(new_s.reshape(-1,self.inputarena,self.inputarena)))
-            target_vec = self.model.predict(s.reshape(-1,self.inputarena,self.inputarena))[0]
+            target = r + self.hyperpar["y"] * np.max(self.model.predict(new_s.reshape(-1,self.inputarena+1,self.inputarena)))
+            target_vec = self.model.predict(s.reshape(-1,self.inputarena+1,self.inputarena))[0]
             target_vec[a] = target
-            self.model.fit(s.reshape(-1,self.inputarena,self.inputarena), target_vec.reshape(-1,6), epochs=1, verbose=0)
+            self.model.fit(s.reshape(-1,self.inputarena+1,self.inputarena), target_vec.reshape(-1,6), epochs=1, verbose=0)
 
     #save the point where the experience for this game ends
     self.episodes.append(len(self.experience))
@@ -367,13 +396,27 @@ def end_of_episode(self):
     for i in range(start, end):
         reward += self.experience[i][2]
     _, _, _,_,game_reward = self.game_state['self']
-    print(str(reward)+" and game rewards: "+str(game_reward)+" after step "+str(self.game_state["step"]))
+    print(str(reward)+" and game rewards: "+str(game_reward)+" after step "+str(self.game_state["step"])+" # random steps: "+str(self.random_count))
+    self.random_count = 0
 
-    if(game_reward >= 8):
-        self.model.save_weights("agent_code/"+AGENT_NAME+"/"+AGENT_NAME+'.h5')
+
+    if(game_reward == 9):
+        self.model.save_weights("agent_code/"+AGENT_NAME+"/"+AGENT_NAME+'_9only.h5')
+
 
     _, _, _,_,game_reward = self.game_state['self']
     self.visualize_convergence.append(game_reward)
 
-    a = np.asarray(self.visualize_convergence)
-    np.savetxt(AGENT_NAME+"_rewards.csv", a, delimiter=",")
+    if(len(self.episodes) % 20 == 5): #only every 20th run
+        a = np.asarray(self.visualize_convergence)
+        self.model.save_weights(AGENT_NAME+'.h5')
+        np.savetxt(AGENT_NAME+"_rewards.csv", a, delimiter=",")
+        print('Saving sucessfull')
+
+    if(len(self.experience) > 10000):
+        old_length = len(self.experience)
+        self.experience[-10000:]
+        new_length = len(self.experience)
+        self.episodes = self.episodes - old_length+new_length
+        print(old_length)
+        print(new_length)

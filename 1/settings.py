@@ -9,7 +9,7 @@ settings = {
     # Display
     'width': 1000,
     'height': 600,
-    'gui': True,#edit Lukas, original: True
+    'gui': False,#edit Lukas, original: True
     'fps': 15,
 
     # Main loop
